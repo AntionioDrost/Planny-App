@@ -1,0 +1,280 @@
+SHIFTPLANNER - UITLEG IN MENSELIJKE TAAL
+
+Dit document legt in gewone taal uit wat de shiftplanner doet,
+welke regels belangrijk zijn en hoe het algoritme keuzes maakt.
+Het doel is dat ook collega's zonder technische kennis snel kunnen
+begrijpen hoe de planner werkt.
+
+==================================================
+1. DOEL VAN DE SHIFTPLANNER
+==================================================
+
+De shiftplanner maakt automatisch een werkrooster dat logisch,
+uitlegbaar en zo eerlijk mogelijk is binnen de beschikbare uren.
+
+De planner moet daarbij meerdere dingen tegelijk goed doen:
+
+- Alle normale shifts moeten altijd gevuld zijn.
+- Uren moeten zo eerlijk mogelijk verdeeld worden.
+- Medewerkers moeten bij voorkeur minstens 8 uur per week kunnen werken.
+- Als 8 uur in een week niet haalbaar is, mag het algoritme dit in een
+  andere week proberen te compenseren.
+- Web shifts mogen worden gebruikt als daar ruimte voor is en als dat
+  helpt om uren eerlijker te verdelen.
+- Het rooster moet logisch en uitlegbaar zijn.
+
+Kort gezegd:
+Eerst moet het rooster kloppen. Daarna moet het zo eerlijk en praktisch
+mogelijk zijn.
+
+==================================================
+2. BASIS VAN HET ROOSTER
+==================================================
+
+Er zijn per dag twee dagdelen:
+
+- Ochtend: 09:00 - 13:00
+- Middag: 13:00 - 17:00
+
+Per dagdeel zijn er twee normale plekken.
+Dat betekent:
+
+- 2 normale shifts in de ochtend
+- 2 normale shifts in de middag
+
+Een medewerker kan dus:
+
+- alleen een ochtend werken
+- alleen een middag werken
+- of een hele dag werken
+
+De normale shifts hebben altijd voorrang.
+Die moeten dus eerst goed gevuld worden.
+
+==================================================
+3. NORMALE SHIFTS EN WEB SHIFTS
+==================================================
+
+Er zijn verschillende soorten werk:
+
+1. Normale shifts
+2. Web shifts
+3. Web revision shifts
+
+Belangrijk:
+
+- Normale shifts zijn de kern van het rooster.
+- Die moeten altijd ingevuld worden.
+- Web shifts zijn optioneel.
+- Web shifts worden alleen ingepland als daar ruimte voor is.
+- Web shifts mogen ook gebruikt worden om normale plekken vrij te maken
+  voor andere medewerkers, als dat helpt om de uren eerlijker te verdelen.
+
+Dus:
+Normale shifts komen eerst.
+Web shifts zijn een extra mogelijkheid, geen hoofdvoorwaarde.
+
+==================================================
+4. HARDE REGELS
+==================================================
+
+Dit zijn regels waar het algoritme zich altijd aan moet houden.
+
+4.1 Normale shifts moeten gevuld zijn
+De planner mag geen rooster maken waarin normale shifts leeg blijven,
+als er een geldige manier is om ze te vullen.
+
+4.2 Ashley mag geen normale shifts draaien
+Ashley mag alleen ingepland worden op:
+
+- web
+- web revision
+
+Ashley mag dus nooit op een normale shift worden gezet.
+
+4.3 Beschikbaarheid moet gerespecteerd worden
+Een medewerker mag alleen ingepland worden op momenten waarop diegene
+beschikbaar is.
+
+4.4 Een medewerker mag meerdere soorten werk op een dag doen
+Dat is toegestaan.
+Iemand mag dus bijvoorbeeld een normale shift en daarnaast ook een web-
+achtige shift op dezelfde dag doen, zolang dat binnen de regels van het
+systeem past.
+
+==================================================
+5. EERLIJKE VERDELING VAN UREN
+==================================================
+
+Eerlijke verdeling van uren is een belangrijk doel.
+Maar eerlijk betekent hier niet simpelweg: iedereen precies evenveel.
+
+De logica is als volgt:
+
+1. Uitgangspunt is dat medewerkers in principe zijn aangenomen met het
+   idee dat zij minimaal 8 uur per week kunnen werken.
+
+2. In de praktijk kan het voorkomen dat iemand tijdelijk maar 4 uur per
+   week beschikbaar is.
+
+3. De planner moet daar rekening mee houden.
+
+4. Daarna moeten de uren zo eerlijk mogelijk verdeeld worden over de
+   mensen die meer uren willen of kunnen werken.
+
+Dat betekent dus:
+
+- eerst kijken wat haalbaar is per medewerker
+- daarna zo eerlijk mogelijk verdelen
+- zonder onmogelijke doelen op te leggen aan mensen die weinig
+  beschikbaar zijn
+
+De planner probeert medewerkers met weinig uren alsnog mee te trekken,
+maar accepteert dat dit soms niet volledig kan.
+
+==================================================
+6. EERLIJKHEID PER WEEK EN OVER MEERDERE WEKEN
+==================================================
+
+De voorkeur is om de uren per week eerlijk te verdelen.
+
+Maar:
+
+- als dat in een bepaalde week niet lukt,
+- en iemand daardoor minder uren krijgt dan gewenst,
+
+mag het algoritme proberen dat in een andere week te compenseren.
+
+Met andere woorden:
+
+- weekniveau is de eerste voorkeur
+- meerdere weken samen zijn de tweede correctielaag
+
+De planner hoeft dus niet blind elke week exact gelijk uit te komen,
+maar moet wel proberen op de langere termijn eerlijk te blijven.
+
+==================================================
+7. VOORKEUREN DIE GEEN HARDE REGELS ZIJN
+==================================================
+
+Sommige medewerkers komen van ver en hebben daarom liever een volle dag,
+zodat de reistijd meer de moeite waard is.
+
+Dat is een voorkeur, geen harde eis.
+
+De planner mag dus:
+
+- proberen om halve dagen slim te combineren tot hele dagen
+- maar alleen als dat niet botst met belangrijkere doelen zoals:
+  - het vullen van normale shifts
+  - eerlijke urenverdeling
+  - beschikbaarheid
+
+Dus:
+Hele dagen zijn fijn, maar niet verplicht.
+
+==================================================
+8. VOLGORDE VAN BELANGRIJKHEID
+==================================================
+
+Als meerdere doelen tegelijk spelen, dan gelden ongeveer deze prioriteiten:
+
+1. Normale shifts vullen
+2. Beschikbaarheid respecteren
+3. Harde uitzonderingen respecteren (zoals Ashley)
+4. Uren eerlijk verdelen
+5. Waar mogelijk uren richting minimaal 8 uur per week brengen
+6. Waar handig hele dagen maken
+7. Web shifts toevoegen als daar ruimte voor is en het helpt
+
+Dit helpt om beslissingen consistent te maken.
+
+==================================================
+9. DE HUIDIGE PLANNERLOGICA
+==================================================
+
+De app gebruikt nu een enkele plannerlogica.
+
+Die planner werkt vanuit deze uitgangspunten:
+
+- normale shifts hebben altijd voorrang
+- minimumuren per week zijn de eerste fairness-laag
+- extra uren boven minimum worden daarna zo gelijk mogelijk verdeeld
+- preferred hours zijn alleen een zachte bovengrens
+- web en revision blijven ondersteunend aan de hoofdbezetting
+
+==================================================
+10. HOE HET ALGORITME IN HOOFDLIJNEN WERKT
+==================================================
+
+In gewone taal hoort de planner ongeveer zo te werken:
+
+Stap 1 - Lees de beschikbaarheid in
+De planner kijkt wie wanneer kan werken.
+
+Stap 2 - Bepaal de harde beperkingen
+Bijvoorbeeld:
+- Ashley mag alleen web en web revision
+- normale shifts moeten gevuld worden
+
+Stap 3 - Plan eerst web- en revision-shifts met harde weekeisen
+Per week probeert de planner eerst de verplichte web- en revision-shifts
+te plaatsen op de toegestane dagen en tijden.
+
+Stap 4 - Vul daarna normale shifts richting minimum
+De planner zet medewerkers eerst op normale shifts om tekorten op het
+weekminimum en het cumulatieve minimum te verkleinen.
+
+Stap 5 - Verdeel extra uren boven minimum zo eerlijk mogelijk
+Als het minimum voldoende gedekt is, gaan extra uren vooral naar
+medewerkers die nog het minst extra uren boven hun minimum kregen.
+
+Stap 6 - Vul resterende gaten en herstel specials waar mogelijk
+Open normale plekken worden daarna gevuld met de best scorende kandidaat.
+Als een special shift eerder moest wijken voor normale dekking, probeert
+de planner die later opnieuw te herstellen.
+
+Stap 7 - Kijk naar weekbalans en meerweekse balans
+De planner controleert of mensen redelijk uitkomen in hun uren.
+Als dat in een week niet lukt, kan dit in een andere week worden
+meegenomen.
+
+==================================================
+11. WAT DE PLANNER NIET MOET DOEN
+==================================================
+
+De planner moet juist niet:
+
+- vaste persoonlijke voorkeuren inbouwen alsof iemand standaard altijd op
+  een bepaald moment hoort te staan
+- mensen onnodig voortrekken
+- Ashley op normale shifts zetten
+- web shifts belangrijker maken dan normale shifts
+- eerlijkheid negeren omdat een week toevallig makkelijker vult
+
+==================================================
+12. WAT EEN GOED RESULTAAT IS
+==================================================
+
+Een goed rooster is een rooster waarbij:
+
+- de normale shifts gevuld zijn
+- de regels zijn gevolgd
+- Ashley alleen op web/web revision staat
+- uren zo eerlijk mogelijk verdeeld zijn
+- medewerkers waar mogelijk richting 8 uur per week gaan
+- hele dagen slim worden benut als dat helpt
+- het eindresultaat logisch en uitlegbaar is
+
+==================================================
+13. SAMENVATTING IN EEN ALINEA
+==================================================
+
+De shiftplanner moet eerst zorgen dat alle normale shifts bezet zijn,
+daarbij harde regels respecteren (zoals dat Ashley geen normale shifts
+mag draaien), en vervolgens de uren zo eerlijk mogelijk verdelen. De
+planner probeert medewerkers idealiter rond minimaal 8 uur per week te
+brengen, maar houdt rekening met beperkte beschikbaarheid. Hele dagen en
+web shifts zijn nuttig, maar alleen als ze passen binnen de hoofdregels.
+Daarnaast mag het systeem tekorten in de ene week zo mogelijk later
+compenseren, zodat de verdeling over meerdere weken eerlijk blijft.

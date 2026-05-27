@@ -1,5 +1,0 @@
-{
-  "name": "Remix: ShiftPlanner Pro",
-  "description": "A smart work schedule planner that automatically assigns shifts based on employee availability, preferred hours, and web shift capacity.",
-  "requestFramePermissions": []
-}

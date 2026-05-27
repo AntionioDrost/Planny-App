@@ -1,23 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EmployeeData, ParsedData, WeeklyWebRequirement } from './parser';
-import { generateSchedule, generateSingleSchedule, getMinimumHoursTarget } from './scheduler';
+import {
+  normalizeParsedData,
+  type EmployeeData,
+  type ParsedData,
+  type WeeklyWebRequirement,
+} from './parser';
+import { deserializeSavedRosterSnapshot } from './scheduleEditor';
+import {
+  assignShift,
+  buildScheduleResultFromAssignments,
+  createPlannerContext,
+  generateSchedule,
+  getFairnessReport,
+  getFullDayCompletionBonus,
+  HOURS_PER_SHIFT,
+  type AssignedShift,
+} from './scheduler';
 
-const DAY = '[15] 06 - 10 April [Tuesday]';
+const DAY_ONE = '[15] 06 - 10 April [Tuesday]';
 const DAY_TWO = '[15] 07 - 10 April [Wednesday]';
-const DAY_THREE = '[15] 08 - 10 April [Thursday]';
-const DAY_WEEK_TWO = '[16] 13 - 17 April [Monday]';
-const DAY_WEEK_TWO_TWO = '[16] 14 - 17 April [Tuesday]';
-const WEEK_ID = '15';
+const DAY_THREE = '[16] 13 - 17 April [Monday]';
 
 const createAvailability = (days: string[], value: string = '9:00-17:00') =>
   Object.fromEntries(days.map(day => [day, value]));
 
 const createEmployee = (name: string, overrides: Partial<EmployeeData> = {}): EmployeeData => ({
   name,
-  availability: { [DAY]: '9:00-17:00' },
+  availability: createAvailability([DAY_ONE]),
   isWeb: false,
   isWebRevision: false,
   isWebOnly: false,
+  contractHours: 8,
   preferredHours: 8,
   maxHours: 8,
   weeklyPreferredHoursOverride: {},
@@ -40,8 +53,8 @@ const createRequirement = (
 
 const createData = (
   employees: EmployeeData[],
-  requirementOverrides: Partial<WeeklyWebRequirement> = {},
-  days: string[] = [DAY]
+  days: string[] = [DAY_ONE],
+  requirementOverrides: Record<string, Partial<WeeklyWebRequirement>> = {}
 ): ParsedData => {
   const weekIds = Array.from(
     new Set(
@@ -57,265 +70,679 @@ const createData = (
     closedDays: [],
     employees,
     weeklyWebRequirements: Object.fromEntries(
-      weekIds.map(weekId => [weekId, createRequirement(requirementOverrides)])
+      weekIds.map(weekId => [weekId, createRequirement(requirementOverrides[weekId])])
     ),
     rosterYear: 2026,
   };
 };
 
-const countSpecialShifts = (employeeSchedules: ReturnType<typeof generateSingleSchedule>['employeeSchedules'], empName: string) =>
-  employeeSchedules[empName].filter(shift => shift.isWeb || shift.isWebRevision);
-
-const getUnfilledSpecialTotal = (result: ReturnType<typeof generateSingleSchedule>) =>
-  result.unfilledWebShifts[DAY].morning +
-  result.unfilledWebShifts[DAY].afternoon +
-  result.unfilledWebRevisionShifts[DAY].morning +
-  result.unfilledWebRevisionShifts[DAY].afternoon;
+const createShift = (
+  day: string,
+  type: 'Morning' | 'Afternoon',
+  kind: 'normal' | 'web' | 'revision' = 'normal'
+): AssignedShift => ({
+  day,
+  type,
+  isWeb: kind === 'web',
+  isWebRevision: kind === 'revision',
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('generateSingleSchedule special shift day limits', () => {
-  it('assigns at most one web shift per employee per day', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
+describe('fairness report', () => {
+  it('calculates proportional entitlement from equal claims', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
 
-    const webOnly = createEmployee('Web Only', {
-      isWebOnly: true,
+    const result = buildScheduleResultFromAssignments(createData(employees, days), {
+      A: [],
+      B: [],
     });
 
-    const result = generateSingleSchedule(
-      createData([webOnly], {
-        webShifts: 2,
-        webShiftDays: [DAY],
-        webShiftTimePreference: 'Morning',
-      })
-    );
-
-    expect(countSpecialShifts(result.employeeSchedules, webOnly.name)).toHaveLength(1);
-    expect(result.unfilledWebShifts[DAY].morning + result.unfilledWebShifts[DAY].afternoon).toBe(1);
+    expect(result.fairnessReport.groups.total.demandHours).toBe(16);
+    expect(result.fairnessReport.employees.A.total?.targetHours).toBeCloseTo(8, 5);
+    expect(result.fairnessReport.employees.B.total?.targetHours).toBeCloseTo(8, 5);
   });
 
-  it('counts web and revision together toward the per-day special cap', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
+  it('calculates load ratios from assigned versus target hours', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
 
-    const specialist = createEmployee('Specialist', {
-      isWebOnly: true,
-      isWebRevision: true,
+    const result = buildScheduleResultFromAssignments(createData(employees, days), {
+      A: [createShift(DAY_ONE, 'Morning'), createShift(DAY_ONE, 'Afternoon')],
+      B: [createShift(DAY_ONE, 'Morning'), createShift(DAY_ONE, 'Afternoon')],
     });
 
-    const result = generateSingleSchedule(
-      createData([specialist], {
+    expect(result.fairnessReport.employees.A.total?.assignedHours).toBe(8);
+    expect(result.fairnessReport.employees.A.total?.loadRatio).toBeCloseTo(1, 5);
+    expect(result.fairnessReport.employees.B.total?.penalty).toBeCloseTo(0, 5);
+  });
+
+  it('uses total-hours fairness as the optimizer penalty', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+
+    const result = buildScheduleResultFromAssignments(createData(employees, days), {
+      A: [createShift(DAY_ONE, 'Morning')],
+      B: [],
+    });
+
+    expect(result.fairnessReport.groups.total.penalty).toBeGreaterThan(0);
+    expect(result.fairnessReport.totalPenalty).toBeCloseTo(
+      result.fairnessReport.groups.total.penalty,
+      5
+    );
+  });
+
+  it('keeps web fairness diagnostic-only in totalPenalty', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+
+    const result = buildScheduleResultFromAssignments(
+      createData(employees, days, {
+        '15': {
+          webShifts: 1,
+          webShiftDays: [DAY_ONE],
+          webShiftTimePreference: 'Morning',
+        },
+      }),
+      {
+        A: [createShift(DAY_ONE, 'Morning', 'web')],
+        B: [],
+      }
+    );
+
+    expect(result.fairnessReport.groups.web.penalty).toBeGreaterThan(0);
+    expect(result.fairnessReport.totalPenalty).toBeCloseTo(
+      result.fairnessReport.groups.total.penalty,
+      5
+    );
+  });
+
+  it('keeps revision fairness diagnostic-only in totalPenalty', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        isWebRevision: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        isWebRevision: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+
+    const result = buildScheduleResultFromAssignments(
+      createData(employees, days, {
+        '15': {
+          webRevisionShifts: 1,
+          webRevisionDays: [DAY_ONE],
+          webRevisionTimePreference: 'Morning',
+        },
+      }),
+      {
+        A: [createShift(DAY_ONE, 'Morning', 'revision')],
+        B: [],
+      }
+    );
+
+    expect(result.fairnessReport.groups.revision.penalty).toBeGreaterThan(0);
+    expect(result.fairnessReport.totalPenalty).toBeCloseTo(
+      result.fairnessReport.groups.total.penalty,
+      5
+    );
+  });
+
+  it('skips fairness groups when demand exists but no qualified capacity is available', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', { availability: createAvailability(days) }),
+      createEmployee('B', { availability: createAvailability(days) }),
+    ];
+    const result = buildScheduleResultFromAssignments(
+      createData(employees, days, {
+        '15': {
+          webShifts: 1,
+          webShiftDays: [DAY_ONE],
+          webShiftTimePreference: 'Morning',
+        },
+      }),
+      {
+        A: [],
+        B: [],
+      }
+    );
+
+    expect(result.fairnessReport.groups.web.demandHours).toBe(HOURS_PER_SHIFT);
+    expect(result.fairnessReport.groups.web.activeEmployees).toBe(0);
+    expect(result.fairnessReport.groups.web.jainIndex).toBeNull();
+    expect(result.fairnessReport.employees.A.web).toBeNull();
+  });
+
+  it('reflects per-week contract hours across a multi-week period', () => {
+    const days = [DAY_ONE, DAY_THREE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        preferredHours: 24,
+        maxHours: 24,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        preferredHours: 24,
+        maxHours: 24,
+      }),
+    ];
+
+    const report = getFairnessReport(
+      createData(employees, days),
+      buildScheduleResultFromAssignments(createData(employees, days), { A: [], B: [] })
+    );
+
+    expect(report.contractHoursForPeriod).toBe(16);
+    expect(report.employees.A.total?.claimHours).toBe(16);
+    expect(report.employees.A.total?.targetHours).toBeCloseTo(16, 5);
+  });
+
+  it('prefers giving the next hours to the employee who is behind on the fair share', () => {
+    const days = [DAY_ONE, DAY_TWO];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+    const data = createData(employees, days);
+
+    const assignToLeader = buildScheduleResultFromAssignments(data, {
+      A: [
+        createShift(DAY_ONE, 'Morning'),
+        createShift(DAY_ONE, 'Afternoon'),
+        createShift(DAY_TWO, 'Morning'),
+      ],
+      B: [],
+    });
+    const assignToLagging = buildScheduleResultFromAssignments(data, {
+      A: [createShift(DAY_ONE, 'Morning'), createShift(DAY_ONE, 'Afternoon')],
+      B: [createShift(DAY_TWO, 'Morning')],
+    });
+
+    expect(assignToLagging.fairnessReport.totalPenalty).toBeLessThan(
+      assignToLeader.fairnessReport.totalPenalty
+    );
+  });
+
+  it('improves total fairness when a web shift goes to the employee behind on total hours', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+    const data = createData(employees, days, {
+      '15': {
         webShifts: 1,
-        webShiftDays: [DAY],
+        webShiftDays: [DAY_ONE],
         webShiftTimePreference: 'Afternoon',
-        webRevisionShifts: 1,
-        webRevisionDays: [DAY],
-        webRevisionTimePreference: 'Morning',
-      })
-    );
-
-    expect(countSpecialShifts(result.employeeSchedules, specialist.name)).toHaveLength(1);
-    expect(getUnfilledSpecialTotal(result)).toBe(1);
-  });
-
-  it('still allows one normal shift plus one special shift on the same day', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-
-    const webber = createEmployee('Webber', {
-      isWeb: true,
-      fullDayPriority: 5,
-    });
-    const morningOnly = createEmployee('Morning Only', {
-      availability: { [DAY]: '9:00-13:00' },
-      preferredHours: 4,
-      maxHours: 4,
-    });
-    const helper = createEmployee('Helper');
-
-    const result = generateSingleSchedule(
-      createData([webber, morningOnly, helper], {
-        webShifts: 1,
-        webShiftDays: [DAY],
-        webShiftTimePreference: 'Morning',
-      })
-    );
-
-    const shifts = result.employeeSchedules[webber.name];
-    const specialShifts = shifts.filter(shift => shift.isWeb || shift.isWebRevision);
-    const normalShifts = shifts.filter(shift => !shift.isWeb && !shift.isWebRevision);
-
-    expect(shifts).toHaveLength(2);
-    expect(specialShifts).toHaveLength(1);
-    expect(normalShifts).toHaveLength(1);
-    expect(shifts.every(shift => shift.day === DAY)).toBe(true);
-  });
-
-  it('does not schedule more web shifts in a week than configured', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-
-    const webOnly = createEmployee('Web Only', {
-      isWebOnly: true,
-      availability: {
-        [DAY]: '9:00-17:00',
-        [DAY_TWO]: '9:00-17:00',
       },
     });
 
-    const result = generateSingleSchedule(
-      createData(
-        [webOnly],
-        {
+    const assignToLeader = buildScheduleResultFromAssignments(data, {
+      A: [createShift(DAY_ONE, 'Morning'), createShift(DAY_ONE, 'Afternoon', 'web')],
+      B: [],
+    });
+    const assignToLagging = buildScheduleResultFromAssignments(data, {
+      A: [createShift(DAY_ONE, 'Morning')],
+      B: [createShift(DAY_ONE, 'Afternoon', 'web')],
+    });
+
+    expect(assignToLagging.fairnessReport.totalPenalty).toBeLessThan(
+      assignToLeader.fairnessReport.totalPenalty
+    );
+    expect(assignToLagging.fairnessReport.totalPenalty).toBeCloseTo(
+      assignToLagging.fairnessReport.groups.total.penalty,
+      5
+    );
+  });
+
+  it('can relocate special shifts within allowed times to improve total-hours fairness', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('Under Web Only', {
+        availability: createAvailability(days, '9:00-13:00'),
+        isWeb: true,
+        isWebOnly: true,
+        preferredHours: 8,
+        maxHours: 8,
+      }),
+      createEmployee('Over Web', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 8,
+        maxHours: 8,
+      }),
+      createEmployee('Morning Normal', {
+        availability: createAvailability(days, '9:00-13:00'),
+        preferredHours: 4,
+        maxHours: 4,
+      }),
+      createEmployee('Afternoon Normal A', {
+        availability: createAvailability(days, '13:00-17:00'),
+        preferredHours: 4,
+        maxHours: 4,
+      }),
+      createEmployee('Afternoon Normal B', {
+        availability: createAvailability(days, '13:00-17:00'),
+        preferredHours: 4,
+        maxHours: 4,
+      }),
+    ];
+
+    const result = generateSchedule(
+      createData(employees, days, {
+        '15': {
           webShifts: 1,
-          webShiftDays: [DAY, DAY_TWO],
-          webShiftTimePreference: 'Any',
+          webShiftDays: [DAY_ONE],
+          webShiftTimePreference: 'Afternoon',
         },
-        [DAY, DAY_TWO]
-      )
+      }),
+      1,
+      'fairness'
     );
 
-    const webShifts = result.employeeSchedules[webOnly.name].filter(shift => shift.isWeb);
-    expect(webShifts).toHaveLength(1);
+    expect(result.employeeSchedules['Under Web Only']).toContainEqual(
+      createShift(DAY_ONE, 'Morning', 'web')
+    );
+    expect(result.employeeSchedules['Over Web']).toContainEqual(
+      createShift(DAY_ONE, 'Morning')
+    );
+    expect(result.unfilledNormalShifts[DAY_ONE].morning).toBe(0);
+    expect(result.unfilledNormalShifts[DAY_ONE].afternoon).toBe(0);
+    expect(result.unfilledWebShifts[DAY_ONE].morning).toBe(0);
+    expect(result.unfilledWebShifts[DAY_ONE].afternoon).toBe(0);
+  });
+
+  it('only includes qualified employees in web fairness', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('Webber', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('Normal', {
+        availability: createAvailability(days),
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+
+    const result = buildScheduleResultFromAssignments(
+      createData(employees, days, {
+        '15': {
+          webShifts: 1,
+          webShiftDays: [DAY_ONE],
+          webShiftTimePreference: 'Morning',
+        },
+      }),
+      {
+        Webber: [createShift(DAY_ONE, 'Morning', 'web')],
+        Normal: [],
+      }
+    );
+
+    expect(result.fairnessReport.groups.web.activeEmployees).toBe(1);
+    expect(result.fairnessReport.employees.Webber.web).not.toBeNull();
+    expect(result.fairnessReport.employees.Normal.web).toBeNull();
+  });
+
+  it('keeps web and revision diagnostic metrics available from getFairnessReport', () => {
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('Webber', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('Reviewer', {
+        availability: createAvailability(days),
+        isWebRevision: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+    ];
+    const data = createData(employees, days, {
+      '15': {
+        webShifts: 1,
+        webShiftDays: [DAY_ONE],
+        webShiftTimePreference: 'Morning',
+        webRevisionShifts: 1,
+        webRevisionDays: [DAY_ONE],
+        webRevisionTimePreference: 'Afternoon',
+      },
+    });
+
+    const report = getFairnessReport(data, {
+      employeeSchedules: {
+        Webber: [createShift(DAY_ONE, 'Morning', 'web')],
+        Reviewer: [createShift(DAY_ONE, 'Afternoon', 'revision')],
+      },
+    });
+
+    expect(report.groups.web.demandHours).toBe(HOURS_PER_SHIFT);
+    expect(report.groups.revision.demandHours).toBe(HOURS_PER_SHIFT);
+    expect(report.groups.web.activeEmployees).toBe(1);
+    expect(report.groups.revision.activeEmployees).toBe(1);
+    expect(report.employees.Webber.web).not.toBeNull();
+    expect(report.employees.Reviewer.revision).not.toBeNull();
   });
 });
 
-describe('preferred hour penalties', () => {
-  it('uses preferred as the minimum target when preferred is below the weekly minimum', () => {
-    const days = [DAY, DAY_TWO];
-    const lowPreference = createEmployee('Low Preference', {
-      availability: createAvailability(days),
-      preferredHours: 4,
-      maxHours: 16,
+describe('normalization and snapshots', () => {
+  it('defaults contractHours to 8 when normalizing employee data', () => {
+    const data = normalizeParsedData({
+      days: [DAY_ONE],
+      closedDays: [],
+      employees: [
+        {
+          ...createEmployee('A'),
+          contractHours: undefined as unknown as number,
+        },
+      ],
+      weeklyWebRequirements: { '15': createRequirement() },
+      rosterYear: 2026,
     });
 
-    expect(getMinimumHoursTarget(lowPreference, WEEK_ID, days, [])).toBe(4);
+    expect(data.employees[0].contractHours).toBe(8);
   });
 
-  it('does not give high-preferred employees automatic priority after minimum is met', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-
-    const days = [DAY, DAY_TWO, DAY_THREE];
-    const sharedAvailability = createAvailability(days);
-    const highPreference = createEmployee('High Preference', {
-      availability: sharedAvailability,
-      preferredHours: 40,
-      maxHours: 24,
+  it('normalizes old saved snapshots without contract hours or fairness report', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      savedAt: '2026-04-24T10:00:00.000Z',
+      data: {
+        days: [DAY_ONE],
+        closedDays: [],
+        employees: [
+          {
+            name: 'A',
+            availability: { [DAY_ONE]: '9:00-17:00' },
+            isWeb: false,
+            isWebRevision: false,
+            isWebOnly: false,
+            preferredHours: 8,
+            maxHours: 8,
+            weeklyPreferredHoursOverride: { '15': null },
+            weeklyMaxHoursOverride: { '15': null },
+            fullDayPriority: 1,
+          },
+        ],
+        weeklyWebRequirements: { '15': createRequirement() },
+        rosterYear: 2026,
+      },
+      generatedSchedule: {
+        employeeSchedules: { A: [] },
+        unfilledNormalShifts: { [DAY_ONE]: { morning: 0, afternoon: 0 } },
+        unfilledWebShifts: { [DAY_ONE]: { morning: 0, afternoon: 0 } },
+        unfilledWebRevisionShifts: { [DAY_ONE]: { morning: 0, afternoon: 0 } },
+        stats: {
+          A: {
+            totalAssignedHours: 0,
+            totalPreferredHours: 8,
+            totalMaxHours: 8,
+            preferredHoursPerWeek: 8,
+            weeklyAssignedHours: { '15': 0 },
+          },
+        },
+      },
+      schedule: {
+        employeeSchedules: { A: [] },
+        unfilledNormalShifts: { [DAY_ONE]: { morning: 0, afternoon: 0 } },
+        unfilledWebShifts: { [DAY_ONE]: { morning: 0, afternoon: 0 } },
+        unfilledWebRevisionShifts: { [DAY_ONE]: { morning: 0, afternoon: 0 } },
+        stats: {
+          A: {
+            totalAssignedHours: 0,
+            totalPreferredHours: 8,
+            totalMaxHours: 8,
+            preferredHoursPerWeek: 8,
+            weeklyAssignedHours: { '15': 0 },
+          },
+        },
+      },
     });
-    const peers = [
-      createEmployee('Peer A', {
-        availability: sharedAvailability,
-        preferredHours: 8,
-        maxHours: 24,
-      }),
-      createEmployee('Peer B', {
-        availability: sharedAvailability,
-        preferredHours: 8,
-        maxHours: 24,
-      }),
-      createEmployee('Peer C', {
-        availability: sharedAvailability,
-        preferredHours: 8,
-        maxHours: 24,
-      }),
-    ];
 
-    const result = generateSingleSchedule(
-      createData([highPreference, ...peers], {}, days)
-    );
+    const snapshot = deserializeSavedRosterSnapshot(raw);
 
-    const assignments = [highPreference, ...peers].map(
-      employee => result.stats[employee.name].weeklyAssignedHours[WEEK_ID] || 0
-    );
-    const peerAssignments = peers.map(
-      employee => result.stats[employee.name].weeklyAssignedHours[WEEK_ID] || 0
-    );
-    const highPreferenceAssigned = result.stats[highPreference.name].weeklyAssignedHours[WEEK_ID] || 0;
-
-    expect(Math.max(...assignments) - Math.min(...assignments)).toBeLessThanOrEqual(4);
-    expect(highPreferenceAssigned - Math.min(...peerAssignments)).toBeLessThanOrEqual(4);
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.data.employees[0].contractHours).toBe(8);
+    expect(snapshot?.generatedSchedule.plannerMode).toBe('fairness');
+    expect(snapshot?.schedule.fairnessReport.totalPenalty).toBeGreaterThanOrEqual(0);
   });
+});
 
-  it('can exceed preferred hours when normal coverage requires it', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-
-    const days = [DAY];
+describe('legacy vs fairness', () => {
+  it('only gives full-day candidate weighting to employees with priority 2 or higher', () => {
+    const days = [DAY_ONE];
     const employees = [
-      createEmployee('Coverage A', {
+      createEmployee('Priority One', {
         availability: createAvailability(days),
-        preferredHours: 4,
+        fullDayPriority: 1,
+        preferredHours: 8,
         maxHours: 8,
       }),
-      createEmployee('Coverage B', {
+      createEmployee('Priority Two', {
         availability: createAvailability(days),
-        preferredHours: 4,
+        fullDayPriority: 2,
+        preferredHours: 8,
+        maxHours: 8,
+      }),
+    ];
+    const ctx = createPlannerContext(createData(employees, days), 'fairness');
+
+    assignShift(ctx, 'Priority One', DAY_ONE, 'Morning', false, false);
+    assignShift(ctx, 'Priority Two', DAY_ONE, 'Morning', false, false);
+
+    expect(
+      getFullDayCompletionBonus(ctx, employees[0], DAY_ONE, 'Afternoon', 'normal')
+    ).toBe(0);
+    expect(
+      getFullDayCompletionBonus(ctx, employees[1], DAY_ONE, 'Afternoon', 'normal')
+    ).toBeGreaterThan(0);
+  });
+
+  it('does not give default priority employees a full-day scheduling preference', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const days = [DAY_ONE];
+    const employees = [
+      createEmployee('A', {
+        availability: createAvailability(days),
+        fullDayPriority: 1,
+        preferredHours: 8,
+        maxHours: 8,
+      }),
+      createEmployee('B', {
+        availability: createAvailability(days),
+        fullDayPriority: 1,
+        preferredHours: 8,
         maxHours: 8,
       }),
     ];
 
-    const result = generateSingleSchedule(createData(employees, {}, days));
+    const result = generateSchedule(createData(employees, days), 1, 'fairness');
 
-    expect(result.unfilledNormalShifts[DAY].morning + result.unfilledNormalShifts[DAY].afternoon).toBe(0);
-    for (const employee of employees) {
-      expect(result.stats[employee.name].weeklyAssignedHours[WEEK_ID] || 0).toBeGreaterThan(employee.preferredHours);
-    }
+    expect(result.employeeSchedules.A).toHaveLength(2);
+    expect(result.employeeSchedules.B).toHaveLength(2);
   });
 
-  it('keeps cumulative extra hours balanced across weeks when preferred differs', () => {
+  it('keeps or improves fairness relative to the legacy planner on a deterministic scenario', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
 
-    const days = [DAY, DAY_TWO, DAY_WEEK_TWO, DAY_WEEK_TWO_TWO];
-    const sharedAvailability = createAvailability(days);
+    const days = [DAY_ONE, DAY_TWO];
     const employees = [
       createEmployee('High Preference', {
-        availability: sharedAvailability,
-        preferredHours: 40,
-        maxHours: 16,
+        availability: createAvailability(days),
+        preferredHours: 24,
+        maxHours: 24,
+        contractHours: 8,
       }),
       createEmployee('Peer A', {
-        availability: sharedAvailability,
+        availability: createAvailability(days),
         preferredHours: 8,
-        maxHours: 16,
+        maxHours: 24,
+        contractHours: 8,
       }),
       createEmployee('Peer B', {
-        availability: sharedAvailability,
+        availability: createAvailability(days),
         preferredHours: 8,
+        maxHours: 24,
+        contractHours: 8,
+      }),
+    ];
+    const data = createData(employees, days);
+
+    const fairness = generateSchedule(data, 1, 'fairness');
+    const legacy = generateSchedule(data, 1, 'legacy');
+
+    const fairnessUnfilled =
+      fairness.unfilledNormalShifts[DAY_ONE].morning +
+      fairness.unfilledNormalShifts[DAY_ONE].afternoon +
+      fairness.unfilledNormalShifts[DAY_TWO].morning +
+      fairness.unfilledNormalShifts[DAY_TWO].afternoon;
+    const legacyUnfilled =
+      legacy.unfilledNormalShifts[DAY_ONE].morning +
+      legacy.unfilledNormalShifts[DAY_ONE].afternoon +
+      legacy.unfilledNormalShifts[DAY_TWO].morning +
+      legacy.unfilledNormalShifts[DAY_TWO].afternoon;
+
+    expect(fairness.fairnessReport.totalPenalty).toBeLessThanOrEqual(
+      legacy.fairnessReport.totalPenalty
+    );
+    expect(fairnessUnfilled).toBeLessThanOrEqual(legacyUnfilled);
+  });
+
+  it('keeps special-shift constraints intact for both planners', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const days = [DAY_ONE, DAY_TWO];
+    const employees = [
+      createEmployee('Specialist', {
+        availability: createAvailability(days),
+        isWeb: true,
+        isWebRevision: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('Support', {
+        availability: createAvailability(days),
+        isWeb: true,
+        preferredHours: 16,
+        maxHours: 16,
+      }),
+      createEmployee('Normal', {
+        availability: createAvailability(days),
+        preferredHours: 16,
         maxHours: 16,
       }),
     ];
+    const data = createData(employees, days, {
+      '15': {
+        webShifts: 1,
+        webShiftDays: [DAY_ONE, DAY_TWO],
+        webShiftTimePreference: 'Any',
+        webRevisionShifts: 1,
+        webRevisionDays: [DAY_ONE, DAY_TWO],
+        webRevisionTimePreference: 'Any',
+      },
+    });
 
-    const result = generateSingleSchedule(createData(employees, {}, days));
-    const highPreferenceAssigned = result.stats['High Preference'].totalAssignedHours;
-    const peerAssignments = [
-      result.stats['Peer A'].totalAssignedHours,
-      result.stats['Peer B'].totalAssignedHours,
-    ];
+    for (const mode of ['fairness', 'legacy'] as const) {
+      const result = generateSchedule(data, 1, mode);
+      for (const employee of employees) {
+        const specialsByDay = result.employeeSchedules[employee.name].reduce<Record<string, number>>(
+          (counts, shift) => {
+            if (shift.isWeb || shift.isWebRevision) {
+              counts[shift.day] = (counts[shift.day] ?? 0) + 1;
+            }
+            return counts;
+          },
+          {}
+        );
 
-    expect(highPreferenceAssigned).toBeLessThanOrEqual(Math.max(...peerAssignments));
-    expect(Math.max(...peerAssignments) - Math.min(...peerAssignments)).toBeLessThanOrEqual(4);
-  });
-
-  it('supports generateSchedule without an explicit iterations argument', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-
-    const days = [DAY];
-    const data = createData(
-      [
-        createEmployee('Planner A', {
-          availability: createAvailability(days),
-        }),
-        createEmployee('Planner B', {
-          availability: createAvailability(days),
-        }),
-      ],
-      {},
-      days
-    );
-
-    const result = generateSchedule(data);
-
-    expect(result.employeeSchedules['Planner A']).toBeDefined();
-    expect(result.employeeSchedules['Planner B']).toBeDefined();
-    expect(result.stats['Planner A'].weeklyAssignedHours[WEEK_ID] || 0).toBeGreaterThanOrEqual(0);
-    expect(result.stats['Planner B'].weeklyAssignedHours[WEEK_ID] || 0).toBeGreaterThanOrEqual(0);
+        expect(Object.values(specialsByDay).every(count => count <= 1)).toBe(true);
+      }
+    }
   });
 });

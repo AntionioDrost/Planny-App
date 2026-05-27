@@ -221,10 +221,10 @@ FOR elke week:
         WHILE normale capaciteit nog niet vol is:
             zoek alle beschikbare medewerkers
 
-            IF er kandidaten binnen max zijn:
-                kies alleen uit die groep
+            IF er geen kandidaten binnen max zijn:
+                stop met nieuwe assignments voor dit dagdeel
             ELSE:
-                kies uit alle beschikbare kandidaten
+                kies alleen uit kandidaten binnen max
 
             score kandidaten in force-fill mode
             wijs beste kandidaat toe
@@ -240,8 +240,8 @@ FOR elke week:
 Dit betekent:
 
 - preferred is geen harde stop
-- max is ook niet absoluut als dekking anders onmogelijk wordt
-- normale bezetting blijft de zwaarste prioriteit
+- max is een harde grens
+- normale bezetting blijft de zwaarste prioriteit, maar niet ten koste van max
 
 ## 10. Fase 6: special shifts later herstellen
 
@@ -340,7 +340,6 @@ FUNCTION scoreSchedule(result, data):
         straf onder cumulatief minimum
         straf boven max
         straf licht voor boven preferred
-        straf licht voor ver onder preferred
 
     FOR elke week:
         bereken per medewerker hoeveel extra uren boven minimum hij kreeg
@@ -356,7 +355,7 @@ De belangrijkste scorelogica is dus:
 
 1. Ongevulde normale shifts zijn heel slecht.
 2. Onder minimum is ook zwaar negatief.
-3. Boven max is zwaar negatief.
+3. Boven max mag niet gebeuren.
 4. Preferred is een zachte grens, geen harde regel.
 5. Fairness wordt gemeten als spreiding van extra uren boven minimum.
 
@@ -368,7 +367,7 @@ Als je deze scheduler in 5 zinnen moet uitleggen:
 2. Eerst worden verplichte web/revision-shifts geplaatst.
 3. Daarna worden normale shifts eerst gebruikt om medewerkers richting hun minimumuren te brengen.
 4. Extra uren boven minimum worden daarna zo eerlijk mogelijk verdeeld.
-5. Preferred hours tellen mee als zachte grens, maar de planner laat normale dekking en fairness zwaarder wegen.
+5. Preferred hours tellen mee als zachte grens, maar weekmaximum blijft een harde grens.
 
 ## 15. Belangrijkste regels in 1 overzicht
 
@@ -377,7 +376,7 @@ HARDE PRIORITEITEN
 - normale shifts vullen
 - beschikbaarheid respecteren
 - web-only alleen op special werk
-- weekmaximum zoveel mogelijk respecteren
+- weekmaximum nooit overschrijden
 
 STURENDE FAIRNESS-REGELS
 - minimum eerst

@@ -23,12 +23,30 @@ export interface EmployeeData {
   isWeb: boolean;
   isWebRevision?: boolean;
   isWebOnly?: boolean;
+  contractHours: number;
   preferredHours: number;
   maxHours: number;
   weeklyPreferredHoursOverride: Record<string, number | null>;
   weeklyMaxHoursOverride: Record<string, number | null>;
   fullDayPriority: number;
 }
+
+export const DEFAULT_CONTRACT_HOURS = 8;
+
+export const normalizeEmployeeData = (employee: EmployeeData): EmployeeData => ({
+  ...employee,
+  isWebRevision: employee.isWebRevision ?? false,
+  isWebOnly: employee.isWebOnly ?? false,
+  contractHours:
+    typeof employee.contractHours === 'number' && Number.isFinite(employee.contractHours)
+      ? employee.contractHours
+      : DEFAULT_CONTRACT_HOURS,
+});
+
+export const normalizeParsedData = (data: ParsedData): ParsedData => ({
+  ...data,
+  employees: data.employees.map(normalizeEmployeeData),
+});
 
 export async function parseExcel(file: File): Promise<ParsedData> {
   return new Promise((resolve, reject) => {
@@ -197,6 +215,7 @@ export async function parseExcel(file: File): Promise<ParsedData> {
               isWeb: false,
               isWebRevision: false,
               isWebOnly: false,
+              contractHours: DEFAULT_CONTRACT_HOURS,
               preferredHours,
               maxHours,
               weeklyPreferredHoursOverride,
@@ -226,13 +245,15 @@ export async function parseExcel(file: File): Promise<ParsedData> {
           };
         }
 
-        resolve({ 
-          days, 
-          closedDays,
-          employees, 
-          weeklyWebRequirements,
-          rosterYear: null,
-        });
+        resolve(
+          normalizeParsedData({
+            days,
+            closedDays,
+            employees,
+            weeklyWebRequirements,
+            rosterYear: null,
+          })
+        );
       } catch (err) {
         reject(err);
       }

@@ -102,6 +102,13 @@ Iemand mag dus bijvoorbeeld een normale shift en daarnaast ook een web-
 achtige shift op dezelfde dag doen, zolang dat binnen de regels van het
 systeem past.
 
+4.5 Weekmaximum is hard
+Een medewerker mag nooit boven het ingestelde maximum aantal uren in die
+week uitkomen.
+
+Als niemand meer binnen zijn weekmaximum past, moet de planner open shifts
+laten staan in plaats van iemand toch extra in te plannen.
+
 ==================================================
 5. EERLIJKE VERDELING VAN UREN
 ==================================================
@@ -200,7 +207,7 @@ Die planner werkt vanuit deze uitgangspunten:
 - normale shifts hebben altijd voorrang
 - minimumuren per week zijn de eerste fairness-laag
 - extra uren boven minimum worden daarna zo gelijk mogelijk verdeeld
-- preferred hours zijn alleen een zachte bovengrens
+- preferred hours zijn alleen een zachte bovengrens en worden niet actief nagejaagd
 - web en revision blijven ondersteunend aan de hoofdbezetting
 
 ==================================================

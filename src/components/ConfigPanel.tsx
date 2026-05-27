@@ -1,15 +1,27 @@
 import React, { useState } from 'react';
 import { ParsedData, WeeklyWebRequirement } from '../lib/parser';
+import type { PlannerMode } from '../lib/scheduler';
 import { Users, Play, Globe } from 'lucide-react';
 
 interface Props {
   data: ParsedData;
   onChange: (data: ParsedData) => void;
   onGenerate: () => void;
+  plannerMode: PlannerMode;
+  onPlannerModeChange: (mode: PlannerMode) => void;
   onClear: () => void;
+  isGenerating?: boolean;
 }
 
-export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
+export function ConfigPanel({
+  data,
+  onChange,
+  onGenerate,
+  plannerMode,
+  onPlannerModeChange,
+  onClear,
+  isGenerating = false,
+}: Props) {
   const [activeTab, setActiveTab] = useState<'main' | 'web' | 'fullDays'>('main');
 
   const updateEmployee = (
@@ -24,6 +36,10 @@ export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
 
   const handlePrefHoursChange = (index: number, hours: number) => {
     updateEmployee(index, employee => ({ ...employee, preferredHours: hours }));
+  };
+
+  const handleContractHoursChange = (index: number, hours: number) => {
+    updateEmployee(index, employee => ({ ...employee, contractHours: hours }));
   };
 
   const handleMaxHoursChange = (index: number, hours: number) => {
@@ -151,7 +167,7 @@ export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-2">
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-slate-700">Roosterjaar</label>
+                <label className="text-sm font-medium text-slate-700">Calendar Year</label>
                 <input
                   type="number"
                   min="2000"
@@ -164,23 +180,45 @@ export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
                 />
               </div>
               <p className="mt-1 text-xs text-slate-500">
-                Alleen gebruikt voor `.ics`-export per werknemer.
+                Only used for per-employee `.ics` export.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-2">
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-slate-700">Planner</label>
+                <select
+                  value={plannerMode}
+                  onChange={(e) => onPlannerModeChange(e.target.value as PlannerMode)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm bg-white"
+                >
+                  <option value="fairness">Fairness</option>
+                  <option value="legacy">Legacy (2026-03-16)</option>
+                </select>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Switch between the new fairness scheduler and the legacy baseline.
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button 
               onClick={onClear}
+              disabled={isGenerating}
               className="text-slate-600 px-4 py-2.5 rounded-xl font-medium hover:bg-slate-100 transition-colors cursor-pointer"
             >
               Clear Data
             </button>
             <button 
               onClick={onGenerate}
-              className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
+              disabled={isGenerating}
+              className={`px-6 py-2.5 rounded-xl font-medium transition-colors shadow-sm flex items-center gap-2 ${
+                isGenerating
+                  ? 'bg-indigo-300 text-white cursor-wait'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer'
+              }`}
             >
               <Play className="w-4 h-4 fill-current" />
-              Generate Schedule
+              {isGenerating ? 'Generating Schedule...' : 'Generate Schedule'}
             </button>
           </div>
         </div>
@@ -236,6 +274,7 @@ export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
                   <tr>
                     <th className="sticky left-0 z-20 bg-white px-6 py-3 font-medium shadow-[1px_0_0_0_#e2e8f0]">Name</th>
                     <th className="px-6 py-3 font-medium">Pref Hrs/Wk</th>
+                    <th className="px-6 py-3 font-medium">Contract Hrs/Wk</th>
                     <th className="px-6 py-3 font-medium">Max Hrs/Wk</th>
                     {mainShiftWeeks.map((week, weekIndex) => (
                       <th
@@ -264,6 +303,19 @@ export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
                             step="4"
                             value={emp.preferredHours}
                             onChange={(e) => handlePrefHoursChange(idx, parseInt(e.target.value) || 0)}
+                            className="w-16 px-2 py-1 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                          />
+                        </div>
+                      </td>
+                      <td className="px-6 py-3">
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="number" 
+                            min="0" 
+                            max="40" 
+                            step="1"
+                            value={emp.contractHours}
+                            onChange={(e) => handleContractHoursChange(idx, parseInt(e.target.value) || 0)}
                             className="w-16 px-2 py-1 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
                           />
                         </div>
@@ -432,7 +484,7 @@ export function ConfigPanel({ data, onChange, onGenerate, onClear }: Props) {
                   </div>
                   <div className="p-6 space-y-6">
                     <p className="text-sm text-slate-500">
-                      Deze aantallen zijn de weeklimiet voor web- en revision-shifts. De planner plant niet meer webshifts in dan hier voor de week is ingesteld.
+                      These values define the weekly limit for web and revision shifts. The planner will not assign more web shifts than configured here for the week.
                     </p>
 
                     {/* Web Shifts */}

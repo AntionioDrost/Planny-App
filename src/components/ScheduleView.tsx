@@ -6,25 +6,52 @@ import {
   getMinimumHoursTarget,
   getPreferredHours,
   getWeekId,
+  getWeekOrder,
   ScheduleResult,
 } from '../lib/scheduler';
-import { Download, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, AlertCircle, Scale } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ScheduleExplanation } from './ScheduleExplanation';
 import { buildCalendarZip } from '../lib/calendarExport';
+import { DayScheduleEditor } from './DayScheduleEditor';
 
 interface Props {
   schedule: ScheduleResult;
+  generatedSchedule: ScheduleResult;
   data: ParsedData;
+  savedAt: string | null;
+  onSaveSchedule: (schedule: ScheduleResult) => void;
+  onResetSchedule: () => void;
 }
 
-export function ScheduleView({ schedule, data }: Props) {
+interface UnfilledShiftEntry {
+  day: string;
+  weekId: string;
+  label: 'Normal' | 'Web' | 'Web Revision';
+  counts: {
+    morning: number;
+    afternoon: number;
+  };
+}
+
+export function ScheduleView({
+  schedule,
+  generatedSchedule,
+  data,
+  savedAt,
+  onSaveSchedule,
+  onResetSchedule,
+}: Props) {
   const [viewMode, setViewMode] = useState<'employee' | 'day' | 'week'>('employee');
   const [calendarExportError, setCalendarExportError] = useState<string | null>(null);
   const [isExportingCalendars, setIsExportingCalendars] = useState(false);
+  const [isFairnessOpen, setIsFairnessOpen] = useState(false);
 
-  const weeks = Array.from(new Set(data.days.map(getWeekId)));
+  const weeks = getWeekOrder(data.days);
   const canExportCalendars = typeof data.rosterYear === 'number';
+  const fairnessReport = schedule.fairnessReport;
+  const plannerModeLabel =
+    schedule.plannerMode === 'legacy' ? 'Legacy (2026-03-16)' : 'Fairness';
 
   const sortShiftsByTime = (shifts: AssignedShift[]) =>
     [...shifts].sort((left, right) =>
@@ -42,6 +69,28 @@ export function ScheduleView({ schedule, data }: Props) {
       (total, weekId) => total + getMinimumHoursTarget(employee, weekId, data.days, data.closedDays),
       0
     );
+
+  const formatFairnessValue = (value: number | null, digits: number = 2) =>
+    value === null || Number.isNaN(value) ? 'N/A' : value.toFixed(digits);
+
+  const formatHours = (value: number) => `${formatFairnessValue(value, 1)}h`;
+
+  const renderFairnessCell = (
+    metric: ScheduleResult['fairnessReport']['employees'][string]['total']
+  ) => {
+    if (!metric) {
+      return <span className="text-slate-400">N/A</span>;
+    }
+
+    return (
+      <div className="space-y-0.5 text-xs text-slate-700">
+        <div>Assigned: {formatHours(metric.assignedHours)}</div>
+        <div>Target: {formatHours(metric.targetHours)}</div>
+        <div>Load ratio: {formatFairnessValue(metric.loadRatio, 3)}</div>
+        <div>Penalty: {formatFairnessValue(metric.penalty, 4)}</div>
+      </div>
+    );
+  };
 
   const downloadBlob = (blob: Blob, filename: string) => {
     const downloadUrl = URL.createObjectURL(blob);
@@ -110,21 +159,59 @@ export function ScheduleView({ schedule, data }: Props) {
       setCalendarExportError(
         error instanceof Error
           ? error.message
-          : 'Kon agenda-export niet genereren.'
+          : 'Could not generate the calendar export.'
       );
     } finally {
       setIsExportingCalendars(false);
     }
   };
 
-  const unmetWebShifts = Object.entries(schedule.unfilledWebShifts).filter(([day, counts]) => !data.closedDays.includes(day) && (counts.morning > 0 || counts.afternoon > 0));
-  const unmetWebRevisionShifts = Object.entries(schedule.unfilledWebRevisionShifts || {}).filter(([day, counts]) => !data.closedDays.includes(day) && (counts.morning > 0 || counts.afternoon > 0));
-  const unmetNormalShifts = Object.entries(schedule.unfilledNormalShifts || {}).filter(([day, counts]) => !data.closedDays.includes(day) && (counts.morning > 0 || counts.afternoon > 0));
+  const formatUnfilledCounts = (counts: UnfilledShiftEntry['counts']) => {
+    if (counts.morning > 0 && counts.afternoon > 0) {
+      return `${counts.morning} morning and ${counts.afternoon} afternoon shift(s)`;
+    }
+    if (counts.morning > 0) {
+      return `${counts.morning} morning shift(s)`;
+    }
+    return `${counts.afternoon} afternoon shift(s)`;
+  };
+
+  const unfilledShiftEntries: UnfilledShiftEntry[] = data.days.flatMap(day => {
+    if (data.closedDays.includes(day)) {
+      return [];
+    }
+
+    const entries: UnfilledShiftEntry[] = [];
+    const weekId = getWeekId(day);
+
+    const addEntry = (
+      label: UnfilledShiftEntry['label'],
+      counts?: { morning: number; afternoon: number }
+    ) => {
+      if (!counts || (counts.morning === 0 && counts.afternoon === 0)) {
+        return;
+      }
+
+      entries.push({ day, weekId, label, counts });
+    };
+
+    addEntry('Normal', schedule.unfilledNormalShifts?.[day]);
+    addEntry('Web', schedule.unfilledWebShifts?.[day]);
+    addEntry('Web Revision', schedule.unfilledWebRevisionShifts?.[day]);
+
+    return entries;
+  });
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <h2 className="text-2xl font-semibold text-slate-900">Generated Schedule</h2>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-semibold text-slate-900">Generated Schedule</h2>
+          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
+            <Scale className="h-3.5 w-3.5" />
+            Planner: {plannerModeLabel}
+          </div>
+        </div>
         <div className="flex flex-col items-start gap-2 xl:items-end">
           <div className="flex flex-wrap gap-3">
             <div className="bg-slate-100 p-1 rounded-lg flex text-sm">
@@ -159,7 +246,7 @@ export function ScheduleView({ schedule, data }: Props) {
                 void exportCalendarZip();
               }}
               disabled={!canExportCalendars || isExportingCalendars}
-              title={!canExportCalendars ? 'Kies eerst een roosterjaar voor agenda-export.' : undefined}
+              title={!canExportCalendars ? 'Select a calendar year before exporting calendars.' : undefined}
               className={`px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex items-center gap-2 ${
                 !canExportCalendars || isExportingCalendars
                   ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
@@ -167,12 +254,12 @@ export function ScheduleView({ schedule, data }: Props) {
               }`}
             >
               <Download className="w-4 h-4" />
-              {isExportingCalendars ? 'Agenda ZIP...' : 'Export Agenda ZIP'}
+              {isExportingCalendars ? 'Calendar ZIP...' : 'Export Calendar ZIP'}
             </button>
           </div>
           {!canExportCalendars && (
             <p className="text-sm text-slate-500">
-              Kies eerst een roosterjaar voor agenda-export.
+              Select a calendar year before exporting calendars.
             </p>
           )}
         </div>
@@ -182,47 +269,120 @@ export function ScheduleView({ schedule, data }: Props) {
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div>
-            <h4 className="font-medium text-rose-800">Agenda-export mislukt</h4>
+            <h4 className="font-medium text-rose-800">Calendar export failed</h4>
             <p className="text-sm text-rose-700 mt-1">{calendarExportError}</p>
           </div>
         </div>
       )}
 
-      {(unmetWebShifts.length > 0 || unmetWebRevisionShifts.length > 0 || unmetNormalShifts.length > 0) && (
+      {viewMode !== 'day' && unfilledShiftEntries.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
             <h4 className="font-medium text-amber-800">Unfilled Shifts</h4>
             <p className="text-sm text-amber-700 mt-1">Could not find enough available employees for the following days:</p>
             <ul className="list-disc list-inside text-sm text-amber-700 mt-2">
-              {unmetNormalShifts.map(([day, counts]) => (
-                <li key={`normal-${day}`}>
-                  {day} (Normal): missing {counts.morning > 0 ? `${counts.morning} morning ` : ''}
-                  {counts.morning > 0 && counts.afternoon > 0 ? 'and ' : ''}
-                  {counts.afternoon > 0 ? `${counts.afternoon} afternoon ` : ''}
-                  shift(s)
-                </li>
-              ))}
-              {unmetWebShifts.map(([day, counts]) => (
-                <li key={`web-${day}`}>
-                  {day} (Web): missing {counts.morning > 0 ? `${counts.morning} morning ` : ''}
-                  {counts.morning > 0 && counts.afternoon > 0 ? 'and ' : ''}
-                  {counts.afternoon > 0 ? `${counts.afternoon} afternoon ` : ''}
-                  shift(s)
-                </li>
-              ))}
-              {unmetWebRevisionShifts.map(([day, counts]) => (
-                <li key={`rev-${day}`}>
-                  {day} (Web Revision): missing {counts.morning > 0 ? `${counts.morning} morning ` : ''}
-                  {counts.morning > 0 && counts.afternoon > 0 ? 'and ' : ''}
-                  {counts.afternoon > 0 ? `${counts.afternoon} afternoon ` : ''}
-                  shift(s)
+              {unfilledShiftEntries.map(({ day, label, counts }) => (
+                <li key={`${label}-${day}`}>
+                  {day} ({label}): missing {formatUnfilledCounts(counts)}
                 </li>
               ))}
             </ul>
           </div>
         </div>
       )}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <button
+          onClick={() => setIsFairnessOpen(open => !open)}
+          className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-slate-50"
+        >
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Fairness Metrics</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Jain-index meet gelijkheid van load ratios, Gini meet ongelijkheid, en CV laat de relatieve spreiding zien.
+            </p>
+          </div>
+          {isFairnessOpen ? (
+            <ChevronUp className="h-5 w-5 text-slate-500" />
+          ) : (
+            <ChevronDown className="h-5 w-5 text-slate-500" />
+          )}
+        </button>
+
+        {isFairnessOpen && (
+          <div className="space-y-5 border-t border-slate-200 px-5 py-5">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              Fairness gebruikt per medewerker een eerlijke claim op uren op basis van availability, preferred hours, max hours en contract hours. In deze roosterperiode is de contractcap in het rapport maximaal {formatHours(fairnessReport.contractHoursForPeriod)} per medewerker.
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Group</th>
+                    <th className="px-4 py-3 font-medium">Demand</th>
+                    <th className="px-4 py-3 font-medium">Penalty</th>
+                    <th className="px-4 py-3 font-medium">Jain</th>
+                    <th className="px-4 py-3 font-medium">Gini</th>
+                    <th className="px-4 py-3 font-medium">CV</th>
+                    <th className="px-4 py-3 font-medium">Active Employees</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
+                  {([
+                    ['total', 'Total'],
+                    ['normal', 'Normal'],
+                    ['web', 'Web'],
+                    ['revision', 'Revision'],
+                  ] as const).map(([groupKey, label]) => {
+                    const group = fairnessReport.groups[groupKey];
+                    return (
+                      <tr key={groupKey}>
+                        <td className="px-4 py-3 font-medium text-slate-900">{label}</td>
+                        <td className="px-4 py-3">{formatHours(group.demandHours)}</td>
+                        <td className="px-4 py-3">{formatFairnessValue(group.penalty, 4)}</td>
+                        <td className="px-4 py-3">{formatFairnessValue(group.jainIndex, 4)}</td>
+                        <td className="px-4 py-3">{formatFairnessValue(group.gini, 4)}</td>
+                        <td className="px-4 py-3">{formatFairnessValue(group.cv, 4)}</td>
+                        <td className="px-4 py-3">{group.activeEmployees}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[1080px] text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Employee</th>
+                    <th className="px-4 py-3 font-medium">Total</th>
+                    <th className="px-4 py-3 font-medium">Normal</th>
+                    <th className="px-4 py-3 font-medium">Web</th>
+                    <th className="px-4 py-3 font-medium">Revision</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {data.employees.map(employee => {
+                    const employeeFairness = fairnessReport.employees[employee.name];
+                    return (
+                      <tr key={employee.name} className="align-top">
+                        <td className="px-4 py-3 font-medium text-slate-900">{employee.name}</td>
+                        <td className="px-4 py-3">{renderFairnessCell(employeeFairness.total)}</td>
+                        <td className="px-4 py-3">{renderFairnessCell(employeeFairness.normal)}</td>
+                        <td className="px-4 py-3">{renderFairnessCell(employeeFairness.web)}</td>
+                        <td className="px-4 py-3">{renderFairnessCell(employeeFairness.revision)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -391,144 +551,15 @@ export function ScheduleView({ schedule, data }: Props) {
               </tbody>
             </table>
           ) : (
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {data.days.map(day => {
-                // Find all shifts for this day
-                const morningNormal: string[] = [];
-                const morningWeb: string[] = [];
-                const morningWebRev: string[] = [];
-                const afternoonNormal: string[] = [];
-                const afternoonWeb: string[] = [];
-                const afternoonWebRev: string[] = [];
-                
-                const missingNormal = schedule.unfilledNormalShifts?.[day] || { morning: 0, afternoon: 0 };
-                const missingWeb = schedule.unfilledWebShifts?.[day] || { morning: 0, afternoon: 0 };
-                const missingWebRev = schedule.unfilledWebRevisionShifts?.[day] || { morning: 0, afternoon: 0 };
-                const isClosed = data.closedDays.includes(day);
-                
-                data.employees.forEach(emp => {
-                  const shifts = schedule.employeeSchedules[emp.name].filter(s => s.day === day);
-                  shifts.forEach(s => {
-                    if (s.type === 'Morning') {
-                      if (s.isWeb) morningWeb.push(emp.name);
-                      else if (s.isWebRevision) morningWebRev.push(emp.name);
-                      else morningNormal.push(emp.name);
-                    }
-                    if (s.type === 'Afternoon') {
-                      if (s.isWeb) afternoonWeb.push(emp.name);
-                      else if (s.isWebRevision) afternoonWebRev.push(emp.name);
-                      else afternoonNormal.push(emp.name);
-                    }
-                  });
-                });
-
-                return (
-                  <div key={day} className={`border border-slate-200 rounded-xl overflow-hidden ${isClosed ? 'opacity-60 bg-slate-50' : ''}`}>
-                    <div className={`px-4 py-3 border-b border-slate-200 ${isClosed ? 'bg-slate-100' : 'bg-slate-50'}`}>
-                      <h4 className="font-medium text-slate-900 truncate flex items-center justify-between" title={day}>
-                        <span>{day}</span>
-                        {isClosed && <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Office Closed</span>}
-                      </h4>
-                    </div>
-                    <div className="p-4 space-y-4">
-                      {isClosed ? (
-                        <div className="py-8 text-center">
-                          <p className="text-sm text-slate-500 italic">No shifts scheduled for this day.</p>
-                        </div>
-                      ) : (
-                        <>
-                          <div>
-                            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Morning (09:00 - 13:00)</h5>
-                            {morningNormal.length > 0 || morningWeb.length > 0 || morningWebRev.length > 0 || missingNormal.morning > 0 || missingWeb.morning > 0 || missingWebRev.morning > 0 ? (
-                              <ul className="space-y-1">
-                                {morningNormal.map((name, i) => (
-                                  <li key={`mn-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-slate-700">{name}</span>
-                                  </li>
-                                ))}
-                                {Array.from({ length: missingNormal.morning }).map((_, i) => (
-                                  <li key={`mn-miss-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-red-600 font-medium italic">Missing Person</span>
-                                  </li>
-                                ))}
-                                {morningWeb.map((name, i) => (
-                                  <li key={`mw-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-blue-700 font-medium">{name}</span>
-                                    <span className="text-[10px] font-medium bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">WEB</span>
-                                  </li>
-                                ))}
-                                {Array.from({ length: missingWeb.morning }).map((_, i) => (
-                                  <li key={`mw-miss-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-red-600 font-medium italic">Missing Person</span>
-                                    <span className="text-[10px] font-medium bg-red-100 text-red-800 px-1.5 py-0.5 rounded">WEB</span>
-                                  </li>
-                                ))}
-                                {morningWebRev.map((name, i) => (
-                                  <li key={`mwr-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-purple-700 font-medium">{name}</span>
-                                    <span className="text-[10px] font-medium bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">REV</span>
-                                  </li>
-                                ))}
-                                {Array.from({ length: missingWebRev.morning }).map((_, i) => (
-                                  <li key={`mwr-miss-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-red-600 font-medium italic">Missing Person</span>
-                                    <span className="text-[10px] font-medium bg-red-100 text-red-800 px-1.5 py-0.5 rounded">REV</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="text-sm text-slate-400 italic">No shifts assigned</p>
-                            )}
-                          </div>
-                          <div className="pt-4 border-t border-slate-100">
-                            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Afternoon (13:00 - 17:00)</h5>
-                            {afternoonNormal.length > 0 || afternoonWeb.length > 0 || afternoonWebRev.length > 0 || missingNormal.afternoon > 0 || missingWeb.afternoon > 0 || missingWebRev.afternoon > 0 ? (
-                              <ul className="space-y-1">
-                                {afternoonNormal.map((name, i) => (
-                                  <li key={`an-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-slate-700">{name}</span>
-                                  </li>
-                                ))}
-                                {Array.from({ length: missingNormal.afternoon }).map((_, i) => (
-                                  <li key={`an-miss-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-red-600 font-medium italic">Missing Person</span>
-                                  </li>
-                                ))}
-                                {afternoonWeb.map((name, i) => (
-                                  <li key={`aw-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-blue-700 font-medium">{name}</span>
-                                    <span className="text-[10px] font-medium bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">WEB</span>
-                                  </li>
-                                ))}
-                                {Array.from({ length: missingWeb.afternoon }).map((_, i) => (
-                                  <li key={`aw-miss-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-red-600 font-medium italic">Missing Person</span>
-                                    <span className="text-[10px] font-medium bg-red-100 text-red-800 px-1.5 py-0.5 rounded">WEB</span>
-                                  </li>
-                                ))}
-                                {afternoonWebRev.map((name, i) => (
-                                  <li key={`awr-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-purple-700 font-medium">{name}</span>
-                                    <span className="text-[10px] font-medium bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">REV</span>
-                                  </li>
-                                ))}
-                                {Array.from({ length: missingWebRev.afternoon }).map((_, i) => (
-                                  <li key={`awr-miss-${i}`} className="text-sm flex items-center justify-between">
-                                    <span className="text-red-600 font-medium italic">Missing Person</span>
-                                    <span className="text-[10px] font-medium bg-red-100 text-red-800 px-1.5 py-0.5 rounded">REV</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="text-sm text-slate-400 italic">No shifts assigned</p>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="p-6">
+              <DayScheduleEditor
+                data={data}
+                schedule={schedule}
+                generatedSchedule={generatedSchedule}
+                savedAt={savedAt}
+                onSaveSchedule={onSaveSchedule}
+                onResetSchedule={onResetSchedule}
+              />
             </div>
           )}
         </div>

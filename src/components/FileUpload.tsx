@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { UploadCloud } from 'lucide-react';
 
 interface Props {
@@ -6,6 +6,8 @@ interface Props {
 }
 
 export function FileUpload({ onUpload }: Props) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -19,25 +21,33 @@ export function FileUpload({ onUpload }: Props) {
     }
   }, [onUpload]);
 
+  const openFilePicker = useCallback(() => {
+    inputRef.current?.click();
+  }, []);
+
   return (
     <div className="max-w-2xl mx-auto mt-12">
+      <input
+        ref={inputRef}
+        id="file-upload"
+        type="file"
+        accept=".xlsx, .xls"
+        className="hidden"
+        onChange={handleChange}
+      />
       <div 
         className="border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center hover:bg-slate-50 transition-colors cursor-pointer"
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
-        onClick={() => document.getElementById('file-upload')?.click()}
+        onClick={openFilePicker}
       >
         <UploadCloud className="w-12 h-12 text-slate-400 mx-auto mb-4" />
         <h3 className="text-lg font-medium text-slate-900 mb-1">Upload Availability Excel</h3>
         <p className="text-sm text-slate-500 mb-4">Drag and drop your .xlsx file here, or click to browse</p>
-        <input 
-          id="file-upload" 
-          type="file" 
-          accept=".xlsx, .xls" 
-          className="hidden" 
-          onChange={handleChange} 
-        />
-        <button className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors">
+        <button
+          type="button"
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+        >
           Select File
         </button>
       </div>

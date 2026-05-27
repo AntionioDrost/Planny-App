@@ -39,7 +39,7 @@ export interface EmployeeCalendarEvent {
   uid: string;
 }
 
-const ICS_PRODUCT_ID = '-//ShiftPlanner Pro//Employee Calendar//NL';
+const ICS_PRODUCT_ID = '-//ShiftPlanner Pro//Employee Calendar//EN';
 const ICS_TIMEZONE_ID = 'Europe/Amsterdam';
 
 const MONTH_INDEX_BY_NAME: Record<string, number> = {
@@ -212,7 +212,7 @@ const parseMonthIndex = (monthName: string) => {
   const normalizedMonth = normalizeToken(monthName);
   const monthIndex = MONTH_INDEX_BY_NAME[normalizedMonth];
   if (monthIndex === undefined) {
-    throw new Error(`Onbekende maand in daglabel: "${monthName}".`);
+    throw new Error(`Unknown month in day label: "${monthName}".`);
   }
   return monthIndex;
 };
@@ -221,7 +221,7 @@ const parseWeekdayIndex = (weekdayName: string) => {
   const normalizedWeekday = normalizeToken(weekdayName);
   const weekdayIndex = WEEKDAY_INDEX_BY_NAME[normalizedWeekday];
   if (weekdayIndex === undefined) {
-    throw new Error(`Onbekende weekdag in daglabel: "${weekdayName}".`);
+    throw new Error(`Unknown weekday in day label: "${weekdayName}".`);
   }
   return weekdayIndex;
 };
@@ -231,7 +231,7 @@ const parseRosterDayLabel = (label: string): ParsedDayLabel => {
   const labelMatch = trimmedLabel.match(/^\[([^\]]+)\]\s*(.+?)\s*\[([^\]]+)\]\s*$/);
 
   if (!labelMatch) {
-    throw new Error(`Kan daglabel niet omzetten naar kalenderdatum: "${label}".`);
+    throw new Error(`Could not convert day label to a calendar date: "${label}".`);
   }
 
   const weekToken = labelMatch[1].trim();
@@ -249,7 +249,7 @@ const parseRosterDayLabel = (label: string): ParsedDayLabel => {
   );
 
   if (!rangeMatch) {
-    throw new Error(`Kan datumrange niet lezen voor agenda-export: "${label}".`);
+    throw new Error(`Could not read date range for calendar export: "${label}".`);
   }
 
   const startDay = parseInt(rangeMatch[1], 10);
@@ -508,7 +508,7 @@ const resolveParsedDayLabel = (
 
   if (!resolvedDate) {
     throw new Error(
-      `Kan geen kalenderdatum afleiden uit daglabel "${parsedLabel.originalLabel}".`
+      `Could not derive a calendar date from day label "${parsedLabel.originalLabel}".`
     );
   }
 
@@ -550,15 +550,15 @@ const getSummaryForShiftKinds = (kinds: ShiftKind[]) => {
   if (uniqueKinds.length === 1) {
     switch (uniqueKinds[0]) {
       case 'web':
-        return 'Werkdienst (Web)';
+        return 'Work Shift (Web)';
       case 'revision':
-        return 'Werkdienst (Web Revision)';
+        return 'Work Shift (Web Revision)';
       default:
-        return 'Werkdienst';
+        return 'Work Shift';
     }
   }
 
-  return 'Werkdienst (Gemengd)';
+  return 'Work Shift (Mixed)';
 };
 
 const buildEventUid = (
@@ -581,7 +581,7 @@ export const sanitizeCalendarFileName = (employeeName: string) => {
     .replace(/\.+$/g, '')
     .trim();
 
-  return sanitizedName || 'werknemer';
+  return sanitizedName || 'employee';
 };
 
 export const buildRosterDayMap = (days: string[], rosterYear: number) => {
@@ -651,14 +651,14 @@ export const buildEmployeeCalendarEvents = (
       const leftDate = dayMap[leftDay];
       const rightDate = dayMap[rightDay];
       if (!leftDate || !rightDate) {
-        throw new Error(`Geen kalenderdatum gevonden voor daglabel "${!leftDate ? leftDay : rightDay}".`);
+        throw new Error(`No calendar date found for day label "${!leftDate ? leftDay : rightDay}".`);
       }
       return compareResolvedDays(leftDate, rightDate);
     })
     .map(([dayLabel, shiftsOnDay]) => {
       const resolvedDay = dayMap[dayLabel];
       if (!resolvedDay) {
-        throw new Error(`Geen kalenderdatum gevonden voor daglabel "${dayLabel}".`);
+        throw new Error(`No calendar date found for day label "${dayLabel}".`);
       }
 
       const orderedShifts = [...shiftsOnDay].sort((leftShift, rightShift) =>
@@ -674,9 +674,9 @@ export const buildEmployeeCalendarEvents = (
         ? { ...resolvedDay, hour: 17, minute: 0 }
         : { ...resolvedDay, hour: getShiftTimeRange(orderedShifts[0]).endHour, minute: 0 };
       const description = [
-        `Werknemer: ${employeeName}`,
-        `Dag: ${dayLabel}`,
-        'Diensten:',
+        `Employee: ${employeeName}`,
+        `Day: ${dayLabel}`,
+        'Shifts:',
         ...orderedShifts.map(shift => {
           const timeRange = getShiftTimeRange(shift);
           return `${timeRange.label} ${getShiftLabel(shift)}`;
@@ -737,15 +737,15 @@ export const buildCalendarZip = (
   options: BuildCalendarZipOptions = {}
 ) => {
   if (!data.rosterYear) {
-    throw new Error('Kies eerst een roosterjaar voor agenda-export.');
+    throw new Error('Select a calendar year before exporting calendars.');
   }
 
   const dayMap = buildRosterDayMap(data.days, data.rosterYear);
   const zip = new JSZip();
-  const calendarFolder = zip.folder('kalenders');
+  const calendarFolder = zip.folder('calendars');
 
   if (!calendarFolder) {
-    throw new Error('Kon de ZIP-map voor agenda-export niet aanmaken.');
+    throw new Error('Could not create the ZIP folder for calendar export.');
   }
 
   for (const employee of data.employees) {

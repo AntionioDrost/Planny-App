@@ -1,20 +1,19 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# ShiftPlanner Pro
 
-# Run and deploy your AI Studio app
+Lokale roosterplanner gebouwd met React en Vite.
 
-This contains everything you need to run your app locally.
+## Ontwikkelen
 
-View your app in AI Studio: https://ai.studio/apps/8dd25fce-f53c-49c4-b489-26575cc00b67
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
+1. Installeer dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Start de app lokaal:
    `npm run dev`
+
+## Windows executable maken
+
+1. Bouw de webapp en de desktopversie:
+   `npm run dist:win`
+2. Open daarna de map `release/ShiftPlanner Pro-win32-x64/`.
+3. Start of deel `ShiftPlanner Pro.exe`.
+
+De `.exe` draait vanuit die map. Als je hem wilt versturen, deel dan de hele map of zip hem eerst in.
